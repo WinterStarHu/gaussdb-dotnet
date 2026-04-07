@@ -68,6 +68,7 @@ public class ReaderNewSchemaTests(SyncOrAsync syncOrAsync) : SyncOrAsyncTestBase
         using var conn = OpenConnection();
 
         conn.ExecuteNonQuery(@"
+                DROP TABLE IF EXISTS data;
                 CREATE TEMP TABLE data (
                     Cod varchar(5) NOT NULL,
                     Descr varchar(40),

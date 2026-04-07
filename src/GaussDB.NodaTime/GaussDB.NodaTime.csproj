@@ -4,7 +4,7 @@
     <Description>NodaTime plugin for GaussDB, allowing mapping of PostgreSQL date/time types to NodaTime types.</Description>
     <PackageTags>$(PackageTags);nodatime;date;time;</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>$(GaussDBSupportedTargetFrameworks)</TargetFrameworks>
     <NoWarn>$(NoWarn);NPG9001</NoWarn> <!-- Converter-related APIs are experimental -->
   </PropertyGroup>
 
@@ -14,8 +14,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\GaussDB\GaussDB.csproj" />
-    <ProjectReference Include="../GaussDB.SourceGenerators/GaussDB.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\GaussDB\GaussDB.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../GaussDB.SourceGenerators/GaussDB.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" GlobalPropertiesToRemove="TargetFramework" />
   </ItemGroup>
 
   <ItemGroup>

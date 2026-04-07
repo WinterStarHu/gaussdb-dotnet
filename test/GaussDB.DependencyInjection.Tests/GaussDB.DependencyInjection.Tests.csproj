@@ -11,8 +11,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/GaussDB.DependencyInjection/GaussDB.DependencyInjection.csproj" />
-    <ProjectReference Include="../GaussDB.Tests/GaussDB.Tests.csproj" />
+    <ProjectReference Include="../../src/GaussDB.DependencyInjection/GaussDB.DependencyInjection.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../GaussDB.Tests/GaussDB.Tests.csproj" SkipGetTargetFrameworkProperties="true" />
   </ItemGroup>
 
 </Project>

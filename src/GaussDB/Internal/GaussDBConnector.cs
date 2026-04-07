@@ -881,11 +881,19 @@ public sealed partial class GaussDBConnector
                     // Windows crypto API has a bug with pem certs
                     // See #3650
                     using var previousCert = cert;
+#if NET9_0_OR_GREATER
+                    cert = X509CertificateLoader.LoadPkcs12(cert.Export(X509ContentType.Pkcs12), password: (string?)null);
+#else
                     cert = new X509Certificate2(cert.Export(X509ContentType.Pkcs12));
+#endif
                 }
             }
 
+#if NET9_0_OR_GREATER
+            cert ??= X509CertificateLoader.LoadPkcs12FromFile(certPath, password);
+#else
             cert ??= new X509Certificate2(certPath, password);
+#endif
             clientCertificates.Add(cert);
 
             _certificate = cert;
@@ -1726,7 +1734,11 @@ public sealed partial class GaussDBConnector
                     certs.ImportFromPemFile(certRootPath);
 
                 if (certs.Count == 0)
+#if NET9_0_OR_GREATER
+                    certs.Add(X509CertificateLoader.LoadCertificateFromFile(certRootPath));
+#else
                     certs.Add(new X509Certificate2(certRootPath));
+#endif
             }
 
             chain.ChainPolicy.CustomTrustStore.AddRange(certs);
@@ -1734,7 +1746,13 @@ public sealed partial class GaussDBConnector
 
             chain.ChainPolicy.ExtraStore.AddRange(certs);
 
-            return chain.Build(certificate as X509Certificate2 ?? new X509Certificate2(certificate));
+            return chain.Build(
+                certificate as X509Certificate2 ??
+#if NET9_0_OR_GREATER
+                X509CertificateLoader.LoadCertificate(certificate.Export(X509ContentType.Cert)));
+#else
+                new X509Certificate2(certificate));
+#endif
         };
 
     #endregion SSL

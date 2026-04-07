@@ -12,6 +12,8 @@ Before getting started, developers can download the [Open Source for Huawei Wiki
 
 ## Quick start
 
+Supported target frameworks for the runtime packages are `net8.0`, `net9.0`, and `net10.0`.
+
 Here's a basic code snippet to get you started:
 
 ```csharp

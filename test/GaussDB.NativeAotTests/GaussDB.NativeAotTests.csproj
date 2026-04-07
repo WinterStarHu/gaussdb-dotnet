@@ -12,8 +12,8 @@
     <TrimmerSingleWarn>false</TrimmerSingleWarn>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/GaussDB/GaussDB.csproj" />
-    <TrimmerRootAssembly Include="../../src/GaussDB/GaussDB.csproj" Condition="'$(RootGaussDB)' == 'True'" />
+    <ProjectReference Include="../../src/GaussDB/GaussDB.csproj" SkipGetTargetFrameworkProperties="true" />
+    <TrimmerRootAssembly Include="HuaweiCloud.Driver.GaussDB" Condition="'$(RootGaussDB)' == 'True'" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Remove="GitHubActionsTestLogger" />

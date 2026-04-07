@@ -54,7 +54,7 @@ builder.Services.AddGaussDBDataSource(
         .UseNetTopologySuite());
 ```
 
-Finally, starting with GaussDB and .NET 8.0, you can now register multiple data sources (and connections), using a service key to distinguish between them:
+Finally, on supported frameworks (`net8.0`, `net9.0`, and `net10.0`), you can register multiple data sources (and connections), using a service key to distinguish between them:
 
 ```c#
 var builder = WebApplication.CreateBuilder(args);

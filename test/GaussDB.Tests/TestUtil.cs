@@ -245,7 +245,12 @@ CREATE TABLE {tableName} ({columns});");
     internal static async Task<string> CreateTempSchema(GaussDBConnection conn)
     {
         var schemaName = "temp_schema" + Interlocked.Increment(ref _tempSchemaCounter);
-        await conn.ExecuteNonQueryAsync($"DROP SCHEMA IF EXISTS {schemaName} ; CREATE SCHEMA {schemaName}");
+        await conn.ExecuteNonQueryAsync(@$"
+START TRANSACTION;
+SELECT pg_advisory_xact_lock(0);
+DROP SCHEMA IF EXISTS {schemaName} CASCADE;
+CREATE SCHEMA {schemaName};
+COMMIT");
         return schemaName;
     }
 
@@ -256,7 +261,11 @@ CREATE TABLE {tableName} ({columns});");
     internal static async Task<string> GetTempViewName(GaussDBConnection conn)
     {
         var viewName = "temp_view" + Interlocked.Increment(ref _tempViewCounter);
-        await conn.ExecuteNonQueryAsync($"DROP VIEW IF EXISTS {viewName} ");
+        await conn.ExecuteNonQueryAsync(@$"
+START TRANSACTION;
+SELECT pg_advisory_xact_lock(0);
+DROP VIEW IF EXISTS {viewName} CASCADE;
+COMMIT");
         return viewName;
     }
 
@@ -267,7 +276,11 @@ CREATE TABLE {tableName} ({columns});");
     internal static async Task<string> GetTempMaterializedViewName(GaussDBConnection conn)
     {
         var viewName = "temp_materialized_view" + Interlocked.Increment(ref _tempViewCounter);
-        await conn.ExecuteNonQueryAsync($"DROP MATERIALIZED VIEW IF EXISTS {viewName} ");
+        await conn.ExecuteNonQueryAsync(@$"
+START TRANSACTION;
+SELECT pg_advisory_xact_lock(0);
+DROP MATERIALIZED VIEW IF EXISTS {viewName} CASCADE;
+COMMIT");
         return viewName;
     }
 
@@ -278,7 +291,11 @@ CREATE TABLE {tableName} ({columns});");
     internal static async Task<string> GetTempFunctionName(GaussDBConnection conn)
     {
         var functionName = "temp_func" + Interlocked.Increment(ref _tempFunctionCounter);
-        await conn.ExecuteNonQueryAsync($"DROP FUNCTION IF EXISTS {functionName}");
+        await conn.ExecuteNonQueryAsync(@$"
+START TRANSACTION;
+SELECT pg_advisory_xact_lock(0);
+DROP FUNCTION IF EXISTS {functionName};
+COMMIT");
         return functionName;
     }
 
@@ -292,7 +309,11 @@ CREATE TABLE {tableName} ({columns});");
     internal static async Task<string> GetTempProcedureName(GaussDBDataSource dataSource)
     {
         var procedureName = "temp_procedure" + Interlocked.Increment(ref _tempProcedureCounter);
-        await dataSource.ExecuteNonQueryAsync($"DROP PROCEDURE IF EXISTS {procedureName} ");
+        await dataSource.ExecuteNonQueryAsync(@$"
+START TRANSACTION;
+SELECT pg_advisory_xact_lock(0);
+DROP PROCEDURE IF EXISTS {procedureName};
+COMMIT");
         return procedureName;
     }
 
@@ -306,7 +327,11 @@ CREATE TABLE {tableName} ({columns});");
     internal static async Task<string> GetTempProcedureName(GaussDBConnection connection)
     {
         var procedureName = "temp_procedure" + Interlocked.Increment(ref _tempProcedureCounter);
-        await connection.ExecuteNonQueryAsync($"DROP PROCEDURE IF EXISTS {procedureName} ");
+        await connection.ExecuteNonQueryAsync(@$"
+START TRANSACTION;
+SELECT pg_advisory_xact_lock(0);
+DROP PROCEDURE IF EXISTS {procedureName};
+COMMIT");
         return procedureName;
     }
 
@@ -317,7 +342,11 @@ CREATE TABLE {tableName} ({columns});");
     internal static async Task<string> GetTempTypeName(GaussDBConnection conn)
     {
         var typeName = "temp_type" + Interlocked.Increment(ref _tempTypeCounter);
-        await conn.ExecuteNonQueryAsync($"DROP TYPE IF EXISTS {typeName} CASCADE");
+        await conn.ExecuteNonQueryAsync(@$"
+START TRANSACTION;
+SELECT pg_advisory_xact_lock(0);
+DROP TYPE IF EXISTS {typeName} CASCADE;
+COMMIT");
         return typeName;
     }
 

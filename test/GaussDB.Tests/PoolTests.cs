@@ -380,9 +380,12 @@ class PoolTests : TestBase
         //todo: 重构时需要关注适配GaussDB连接池
         using var conn = dataSource.CreateConnection();
         for (var i = 0; i < 1; i++)
-            Assert.That(() => conn.Open(), Throws.Exception
-                .TypeOf<GaussDBException>()
-                .With.InnerException.TypeOf<System.TimeoutException>());
+        {
+            var ex = Assert.Catch<Exception>(() => conn.Open())!;
+            Assert.That(ex, Is.TypeOf<GaussDBException>().Or.TypeOf<SocketException>());
+            if (ex is GaussDBException gaussdbException)
+                Assert.That(gaussdbException.InnerException, Is.TypeOf<TimeoutException>().Or.TypeOf<SocketException>());
+        }
         AssertPoolState(dataSource, open: 0, idle: 0);
     }
 

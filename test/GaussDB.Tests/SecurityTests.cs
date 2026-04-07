@@ -274,8 +274,8 @@ public class SecurityTests : TestBase
             await using var dataSource = CreateDataSource(csb =>
             {
                 csb.SslMode = SslMode.Prefer;
-                // csb.Username = "gaussdb_tests_nossl";
-                // csb.Password = "gaussdb_tests_nossl";
+                csb.Username = "gaussdb_tests_nossl";
+                csb.Password = "Password@1234";
                 csb.Multiplexing = multiplexing;
                 csb.KeepAlive = keepAlive ? 10 : 0;
             });

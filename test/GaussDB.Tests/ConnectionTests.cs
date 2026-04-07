@@ -224,6 +224,8 @@ public class ConnectionTests(MultiplexingMode multiplexingMode) : MultiplexingTe
             new GaussDBConnection("User ID=gaussdb_tests;Password=gaussdb_tests;Database=gaussdb_tests"));
 
     [Test, Description("Reuses the same connection instance for a failed connection, then a successful one")]
+    [NonParallelizable]
+    [Timeout(60000)]
     public async Task Fail_connect_then_succeed([Values] bool pooling)
     {
         if (IsMultiplexing && !pooling) // Multiplexing doesn't work without pooling
@@ -322,6 +324,7 @@ public class ConnectionTests(MultiplexingMode multiplexingMode) : MultiplexingTe
         var connString = new GaussDBConnectionStringBuilder(ConnectionString)
         {
             Host = unknownIp,
+            Multiplexing = false,
             Pooling = false,
             Timeout = 30
         }.ToString();

@@ -220,6 +220,7 @@ SELECT 1 AS some_other_column, 2";
         using var conn = OpenConnection();
 
         conn.ExecuteNonQuery(@"
+                DROP TABLE IF EXISTS data;
                 CREATE TEMP TABLE data (
                     Cod varchar(5) NOT NULL,
                     Descr varchar(40),

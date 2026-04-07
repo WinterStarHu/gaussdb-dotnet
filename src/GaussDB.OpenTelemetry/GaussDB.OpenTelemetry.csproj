@@ -3,13 +3,13 @@
     <PropertyGroup>
         <IsPackable>false</IsPackable>
         <Description>OpenTelemetry instrumentation for GaussDB.</Description>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFrameworks>$(GaussDBSupportedTargetFrameworks)</TargetFrameworks>
         <PackageTags>$(PackageTags);opentelemetry;tracing;diagnostics;instrumentation</PackageTags>
         <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\GaussDB\GaussDB.csproj" />
+        <ProjectReference Include="..\GaussDB\GaussDB.csproj" SkipGetTargetFrameworkProperties="true" />
     </ItemGroup>
 
     <ItemGroup>
