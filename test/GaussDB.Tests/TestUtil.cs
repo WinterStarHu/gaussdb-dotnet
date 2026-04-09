@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -14,6 +15,9 @@ namespace HuaweiCloud.GaussDB.Tests;
 
 public static class TestUtil
 {
+    static readonly ConcurrentDictionary<string, bool> IsOpenGaussCache = new();
+    static readonly string TempObjectRunId = $"{Environment.ProcessId}_{Guid.NewGuid().ToString("N")[..8]}";
+
     /// <summary>
     /// Unless the NPGSQL_TEST_DB environment variable is defined, this is used as the connection string for the
     /// test database.
@@ -102,6 +106,26 @@ public static class TestUtil
 
     public static async Task<bool> IsPgPrerelease(GaussDBConnection conn)
         => ((string) (await conn.ExecuteScalarAsync("SELECT version()"))!).Contains("beta");
+
+    public static bool IsOpenGauss(GaussDBConnection conn)
+        => IsOpenGaussCache.GetOrAdd(conn.ConnectionString, _ =>
+        {
+            var version = (string)conn.ExecuteScalar("SELECT version()")!;
+            return version.Contains("gaussdb", StringComparison.OrdinalIgnoreCase) ||
+                   version.Contains("opengauss", StringComparison.OrdinalIgnoreCase);
+        });
+
+    public static async Task<bool> IsOpenGaussAsync(GaussDBConnection conn)
+    {
+        if (IsOpenGaussCache.TryGetValue(conn.ConnectionString, out var cached))
+            return cached;
+
+        var version = (string)(await conn.ExecuteScalarAsync("SELECT version()"))!;
+        var isOpenGauss = version.Contains("gaussdb", StringComparison.OrdinalIgnoreCase) ||
+                          version.Contains("opengauss", StringComparison.OrdinalIgnoreCase);
+        IsOpenGaussCache[conn.ConnectionString] = isOpenGauss;
+        return isOpenGauss;
+    }
 
     public static void EnsureExtension(GaussDBConnection conn, string extension, string? minVersion = null)
         => EnsureExtension(conn, extension, minVersion, async: false).GetAwaiter().GetResult();
@@ -197,7 +221,7 @@ public static class TestUtil
     /// </summary>
     internal static async Task<string> CreateTempTable(GaussDBConnection conn, string columns)
     {
-        var tableName = "temp_table" + Interlocked.Increment(ref _tempTableCounter);
+        var tableName = NextTempName("temp_table", ref _tempTableCounter);
 
         await conn.ExecuteNonQueryAsync(@$"
 START TRANSACTION;
@@ -214,7 +238,7 @@ CREATE TABLE {tableName} ({columns});");
     /// </summary>
     internal static async Task<string> GetTempTableName(GaussDBConnection conn)
     {
-        var tableName = "temp_table" + Interlocked.Increment(ref _tempTableCounter);
+        var tableName = NextTempName("temp_table", ref _tempTableCounter);
         await conn.ExecuteNonQueryAsync(@$"
 START TRANSACTION;
 SELECT pg_advisory_xact_lock(0);
@@ -229,7 +253,7 @@ COMMIT");
     /// </summary>
     internal static async Task<string> CreateTempTable(GaussDBDataSource dataSource, string columns)
     {
-        var tableName = "temp_table" + Interlocked.Increment(ref _tempTableCounter);
+        var tableName = NextTempName("temp_table", ref _tempTableCounter);
         await dataSource.ExecuteNonQueryAsync(@$"
 START TRANSACTION;
 SELECT pg_advisory_xact_lock(0);
@@ -244,8 +268,8 @@ CREATE TABLE {tableName} ({columns});");
     /// </summary>
     internal static async Task<string> CreateTempSchema(GaussDBConnection conn)
     {
-        var schemaName = "temp_schema" + Interlocked.Increment(ref _tempSchemaCounter);
-        await conn.ExecuteNonQueryAsync($"DROP SCHEMA IF EXISTS {schemaName} ; CREATE SCHEMA {schemaName}");
+        var schemaName = NextTempName("temp_schema", ref _tempSchemaCounter);
+        await conn.ExecuteNonQueryAsync($"DROP SCHEMA IF EXISTS {schemaName} CASCADE; CREATE SCHEMA {schemaName}");
         return schemaName;
     }
 
@@ -255,8 +279,8 @@ CREATE TABLE {tableName} ({columns});");
     /// </summary>
     internal static async Task<string> GetTempViewName(GaussDBConnection conn)
     {
-        var viewName = "temp_view" + Interlocked.Increment(ref _tempViewCounter);
-        await conn.ExecuteNonQueryAsync($"DROP VIEW IF EXISTS {viewName} ");
+        var viewName = NextTempName("temp_view", ref _tempViewCounter);
+        await conn.ExecuteNonQueryAsync($"DROP VIEW IF EXISTS {viewName} CASCADE");
         return viewName;
     }
 
@@ -266,8 +290,8 @@ CREATE TABLE {tableName} ({columns});");
     /// </summary>
     internal static async Task<string> GetTempMaterializedViewName(GaussDBConnection conn)
     {
-        var viewName = "temp_materialized_view" + Interlocked.Increment(ref _tempViewCounter);
-        await conn.ExecuteNonQueryAsync($"DROP MATERIALIZED VIEW IF EXISTS {viewName} ");
+        var viewName = NextTempName("temp_materialized_view", ref _tempViewCounter);
+        await conn.ExecuteNonQueryAsync($"DROP MATERIALIZED VIEW IF EXISTS {viewName} CASCADE");
         return viewName;
     }
 
@@ -277,8 +301,9 @@ CREATE TABLE {tableName} ({columns});");
     /// </summary>
     internal static async Task<string> GetTempFunctionName(GaussDBConnection conn)
     {
-        var functionName = "temp_func" + Interlocked.Increment(ref _tempFunctionCounter);
-        await conn.ExecuteNonQueryAsync($"DROP FUNCTION IF EXISTS {functionName}");
+        var functionName = NextTempName("temp_func", ref _tempFunctionCounter);
+        // openGauss requires an explicit empty parameter list when using CASCADE on DROP FUNCTION.
+        await conn.ExecuteNonQueryAsync($"DROP FUNCTION IF EXISTS {functionName}() CASCADE");
         return functionName;
     }
 
@@ -291,8 +316,9 @@ CREATE TABLE {tableName} ({columns});");
     /// </returns>
     internal static async Task<string> GetTempProcedureName(GaussDBDataSource dataSource)
     {
-        var procedureName = "temp_procedure" + Interlocked.Increment(ref _tempProcedureCounter);
-        await dataSource.ExecuteNonQueryAsync($"DROP PROCEDURE IF EXISTS {procedureName} ");
+        var procedureName = NextTempName("temp_procedure", ref _tempProcedureCounter);
+        // openGauss requires an explicit empty parameter list when using CASCADE on DROP PROCEDURE.
+        await dataSource.ExecuteNonQueryAsync($"DROP PROCEDURE IF EXISTS {procedureName}() CASCADE");
         return procedureName;
     }
 
@@ -305,8 +331,9 @@ CREATE TABLE {tableName} ({columns});");
     /// </returns>
     internal static async Task<string> GetTempProcedureName(GaussDBConnection connection)
     {
-        var procedureName = "temp_procedure" + Interlocked.Increment(ref _tempProcedureCounter);
-        await connection.ExecuteNonQueryAsync($"DROP PROCEDURE IF EXISTS {procedureName} ");
+        var procedureName = NextTempName("temp_procedure", ref _tempProcedureCounter);
+        // openGauss requires an explicit empty parameter list when using CASCADE on DROP PROCEDURE.
+        await connection.ExecuteNonQueryAsync($"DROP PROCEDURE IF EXISTS {procedureName}() CASCADE");
         return procedureName;
     }
 
@@ -316,17 +343,20 @@ CREATE TABLE {tableName} ({columns});");
     /// </summary>
     internal static async Task<string> GetTempTypeName(GaussDBConnection conn)
     {
-        var typeName = "temp_type" + Interlocked.Increment(ref _tempTypeCounter);
+        var typeName = NextTempName("temp_type", ref _tempTypeCounter);
         await conn.ExecuteNonQueryAsync($"DROP TYPE IF EXISTS {typeName} CASCADE");
         return typeName;
     }
 
-    internal static volatile int _tempTableCounter;
-    static volatile int _tempViewCounter;
-    static volatile int _tempFunctionCounter;
-    static volatile int _tempProcedureCounter;
-    static volatile int _tempSchemaCounter;
-    static volatile int _tempTypeCounter;
+    static string NextTempName(string prefix, ref int counter)
+        => $"{prefix}_{TempObjectRunId}_{Interlocked.Increment(ref counter)}";
+
+    internal static int _tempTableCounter;
+    static int _tempViewCounter;
+    static int _tempFunctionCounter;
+    static int _tempProcedureCounter;
+    static int _tempSchemaCounter;
+    static int _tempTypeCounter;
 
     /// <summary>
     /// Creates a pool with a unique application name, usable for a single test, and returns an
@@ -346,7 +376,7 @@ CREATE TABLE {tableName} ({columns});");
         return new PoolDisposer(tempConnectionString);
     }
 
-    static volatile int _tempPoolCounter;
+    static int _tempPoolCounter;
 
     readonly struct PoolDisposer : IDisposable
     {

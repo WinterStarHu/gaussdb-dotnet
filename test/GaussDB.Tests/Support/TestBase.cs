@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
 using System.Linq;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -601,9 +602,9 @@ public abstract class TestBase
 
     static Task OpenConnection(GaussDBConnection conn, bool async)
     {
-        return OpenConnectionInternal(hasLock: false);
+        return OpenConnectionInternal(hasLock: false, transientRetryCount: 0);
 
-        async Task OpenConnectionInternal(bool hasLock)
+        async Task OpenConnectionInternal(bool hasLock, int transientRetryCount)
         {
             try
             {
@@ -611,6 +612,11 @@ public abstract class TestBase
                     await conn.OpenAsync();
                 else
                     conn.Open();
+            }
+            catch (Exception e) when (IsTransientOpenException(e) && transientRetryCount < 1)
+            {
+                await Task.Delay(1000);
+                await OpenConnectionInternal(hasLock, transientRetryCount + 1);
             }
             catch (PostgresException e)
             {
@@ -624,7 +630,7 @@ public abstract class TestBase
                         DatabaseCreationLock.Wait();
                         try
                         {
-                            await OpenConnectionInternal(hasLock: true);
+                            await OpenConnectionInternal(hasLock: true, transientRetryCount);
                         }
                         finally
                         {
@@ -656,6 +662,10 @@ public abstract class TestBase
                 throw;
             }
         }
+
+        static bool IsTransientOpenException(Exception exception)
+            => exception is TimeoutException or SocketException ||
+               exception is GaussDBException { InnerException: TimeoutException or SocketException };
     }
 
     // In PG under 9.1 you can't do SELECT pg_sleep(2) in binary because that function returns void and PG doesn't know

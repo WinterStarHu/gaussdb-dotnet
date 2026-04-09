@@ -3,7 +3,7 @@
     <RootNamespace>HuaweiCloud.GaussDB.Specification.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/GaussDB/GaussDB.csproj" />
+    <ProjectReference Include="../../src/GaussDB/GaussDB.csproj" SkipGetTargetFrameworkProperties="true" />
   </ItemGroup>
 
   <ItemGroup>

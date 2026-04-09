@@ -17,9 +17,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/GaussDB/GaussDB.csproj" />
-    <ProjectReference Include="../../src/GaussDB.NodaTime/GaussDB.NodaTime.csproj" />
-    <ProjectReference Include="../../src/GaussDB.NetTopologySuite/GaussDB.NetTopologySuite.csproj" />
+    <ProjectReference Include="../../src/GaussDB/GaussDB.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../../src/GaussDB.NodaTime/GaussDB.NodaTime.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../../src/GaussDB.NetTopologySuite/GaussDB.NetTopologySuite.csproj" SkipGetTargetFrameworkProperties="true" />
   </ItemGroup>
 
 </Project>

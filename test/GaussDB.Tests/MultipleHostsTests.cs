@@ -895,6 +895,7 @@ public class MultipleHostsTests : TestBase
     [Test, NonParallelizable]
     public void IntegrationTest([Values] bool loadBalancing, [Values] bool alwaysCheckHostState)
     {
+        EnsureLocalhostMultiHostPrerequisites();
         PoolManager.Reset();
 
         var dataSourceBuilder = new GaussDBDataSourceBuilder(ConnectionString)
@@ -953,11 +954,36 @@ public class MultipleHostsTests : TestBase
         }
     }
 
+    void EnsureLocalhostMultiHostPrerequisites()
+    {
+        foreach (var host in new[] { "localhost", "127.0.0.1" })
+        {
+            var csb = new GaussDBConnectionStringBuilder(ConnectionString)
+            {
+                Host = host,
+                Pooling = false,
+                Multiplexing = false,
+                Timeout = 2
+            };
+
+            try
+            {
+                using var conn = new GaussDBConnection(csb.ConnectionString);
+                conn.Open();
+            }
+            catch (Exception e) when (e is GaussDBException or SocketException or TimeoutException)
+            {
+                Assert.Ignore($"Requires a locally reachable server via {host} for {nameof(IntegrationTest)}");
+            }
+        }
+    }
+
     [Test]
     [IssueLink("https://github.com/npgsql/npgsql/issues/5055")]
     [NonParallelizable] // Disables sql rewriting
     public async Task Multiple_hosts_with_disabled_sql_rewriting()
     {
+        EnsureLocalhostMultiHostPrerequisites();
         using var _ = DisableSqlRewriting();
 
         var dataSourceBuilder = new GaussDBDataSourceBuilder(ConnectionString)

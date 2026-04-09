@@ -245,22 +245,7 @@ public class ConnectionTests(MultiplexingMode multiplexingMode) : MultiplexingTe
             Assert.That(pgEx.SqlState, Is.EqualTo(PostgresErrorCodes.InvalidCatalogName)); // database doesn't exist
             Assert.That(conn2.FullState, Is.EqualTo(ConnectionState.Closed));
 
-            // 添加重试机制以处理 GaussDB 云数据库上的并发问题
-            const int maxRetries = 5;
-            for (var i = 0; i < maxRetries; i++)
-            {
-                try
-                {
-                    await conn1.ExecuteNonQueryAsync($"CREATE DATABASE \"{dbName}\" TEMPLATE template0");
-                    break; // 成功创建数据库，跳出重试循环
-                }
-                catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
-                {
-                    // 如果违反唯一约束，可能是并发测试导致的，等待一段时间后重试
-                    if (i == maxRetries - 1) throw; // 最后一次尝试，重新抛出异常
-                    await Task.Delay(1000 * (i + 1)); // 指数退避延迟
-                }
-            }
+            await conn1.ExecuteNonQueryAsync($"CREATE DATABASE \"{dbName}\" TEMPLATE template0");
 
             Assert.DoesNotThrowAsync(conn2.OpenAsync);
             Assert.DoesNotThrowAsync(conn2.CloseAsync);
@@ -312,6 +297,9 @@ public class ConnectionTests(MultiplexingMode multiplexingMode) : MultiplexingTe
     [Test]
     public void Connect_timeout_cancel()
     {
+        if (IsMultiplexing)
+            Assert.Ignore("Multiplexing doesn't work without pooling");
+
         var unknownIp = Environment.GetEnvironmentVariable("NPGSQL_UNKNOWN_IP");
         if (unknownIp is null)
         {

@@ -2,14 +2,14 @@
 
     <PropertyGroup>
         <IsPackable>false</IsPackable>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFrameworks>$(GaussDBSupportedTargetFrameworks)</TargetFrameworks>
         <PackageTags>$(PackageTags);di;dependency injection</PackageTags>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <Description>Dependency injection extension for GaussDB, extensions based Microsoft.Extensions.DependencyInjection</Description>
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\GaussDB\GaussDB.csproj" />
+        <ProjectReference Include="..\GaussDB\GaussDB.csproj" SkipGetTargetFrameworkProperties="true" />
     </ItemGroup>
     
     <ItemGroup>

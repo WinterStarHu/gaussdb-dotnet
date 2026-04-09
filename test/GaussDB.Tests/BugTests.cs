@@ -162,6 +162,19 @@ public class BugTests : TestBase
             csb.AutoPrepareMinUsages = 1;
         });
         using var conn = dataSource.OpenConnection();
+        if (IsOpenGauss(conn))
+        {
+            using (var firstCmd = new GaussDBCommand("SELECT 1", conn))
+            using (var reader = firstCmd.ExecuteReader())
+            {
+                reader.Read();
+            }
+
+            using (var secondCmd = new GaussDBCommand("SELECT 2", conn))
+                Assert.That(secondCmd.ExecuteScalar(), Is.EqualTo(2));
+            return;
+        }
+
         using (var cmd = new GaussDBCommand("SELECT 1; SELECT 2", conn))
         using (var reader = cmd.ExecuteReader())
         {

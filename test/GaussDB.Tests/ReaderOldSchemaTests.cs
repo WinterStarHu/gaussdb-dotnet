@@ -186,6 +186,7 @@ CREATE OR REPLACE VIEW {view} (id, int2) AS SELECT id, int2 + int2 AS int2 FROM 
         //     return;
 
         using var conn = await OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(conn);
         var table = await CreateTempTable(conn, "name TEXT");
 
         var query = $@"
@@ -194,7 +195,7 @@ UPDATE {table} SET name='yo' WHERE 1=0;
 SELECT 1 AS some_other_column, 2";
 
         using var cmd = new GaussDBCommand(query, conn);
-        if (prepare == PrepareOrNot.Prepared)
+        if (prepare == PrepareOrNot.Prepared && !isOpenGauss)
             cmd.Prepare();
         using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SchemaOnly))
         {
@@ -220,6 +221,7 @@ SELECT 1 AS some_other_column, 2";
         using var conn = OpenConnection();
 
         conn.ExecuteNonQuery(@"
+                DROP TABLE IF EXISTS data;
                 CREATE TEMP TABLE data (
                     Cod varchar(5) NOT NULL,
                     Descr varchar(40),

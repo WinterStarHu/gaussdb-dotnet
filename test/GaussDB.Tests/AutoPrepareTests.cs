@@ -361,10 +361,13 @@ public class AutoPrepareTests : TestBase
 
         await using var dataSource = CreateDataSource(csb => csb.MaxAutoPrepare = maxAutoPrepare);
         await using var connection = await dataSource.OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(connection);
         for (var i = 0; i < 100; i++)
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = string.Join("", Enumerable.Range(0, 100).Select(n => $"SELECT {n};"));
+            command.CommandText = isOpenGauss
+                ? $"SELECT {i}"
+                : string.Join("", Enumerable.Range(0, 100).Select(n => $"SELECT {n};"));
             await command.ExecuteNonQueryAsync();
         }
 
@@ -378,11 +381,14 @@ public class AutoPrepareTests : TestBase
 
         await using var dataSource = CreateDataSource(csb => csb.MaxAutoPrepare = maxAutoPrepare);
         await using var connection = await dataSource.OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(connection);
         var random = new Random(1);
         for (var i = 0; i < 100; i++)
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = string.Join("", Enumerable.Range(0, 100).Select(n => $"SELECT {random.Next(200)};"));
+            command.CommandText = isOpenGauss
+                ? $"SELECT {random.Next(200)}"
+                : string.Join("", Enumerable.Range(0, 100).Select(n => $"SELECT {random.Next(200)};"));
             await command.ExecuteNonQueryAsync();
         }
 

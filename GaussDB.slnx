@@ -8,6 +8,7 @@
     <File Path="README.md" />
   </Folder>
   <Folder Name="/example/">
+    <File Path="example/.env" />
     <Project Path="example/GetStarted/GetStarted.csproj" />
   </Folder>
   <Folder Name="/Github/">

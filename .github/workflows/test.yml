@@ -23,7 +23,7 @@ jobs:
     runs-on: "ubuntu-latest"
     env:
       # do not specify IncludeErrorDetail=true in connection string directly, it would affect the unit tests
-      NPGSQL_TEST_DB: "Host=localhost;Port=5432;Username=gaussdb;Password=Password@1234;Database=gaussdb_tests;"
+      NPGSQL_TEST_DB: "Host=localhost;Port=5432;Username=gaussdb;Password=Password@1234;Database=gaussdb_tests;SSL Mode=Disable;Multiplexing=False;"
 
     # Service containers to run with `container-job`
     # https://docs.github.com/en/actions/use-cases-and-examples/using-containerized-services/creating-postgresql-service-containers
@@ -53,12 +53,29 @@ jobs:
             test_tfm: net8.0
           - config: Release
             test_tfm: net9.0
+          - config: Release
+            test_tfm: net10.0
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Update DB configuration
         run: |
+          docker cp .build/ca.crt opengauss:/var/lib/opengauss/data/ca.crt
+          docker cp .build/server.crt opengauss:/var/lib/opengauss/data/server.crt
+          docker cp .build/server.key opengauss:/var/lib/opengauss/data/server.key
+          docker exec opengauss bash -c "chown omm:dbgrp /var/lib/opengauss/data/ca.crt /var/lib/opengauss/data/server.crt /var/lib/opengauss/data/server.key || true"
+          docker exec opengauss bash -c "chmod 600 /var/lib/opengauss/data/ca.crt"
+          docker exec opengauss bash -c "chmod 600 /var/lib/opengauss/data/server.crt"
+          docker exec opengauss bash -c "chmod 600 /var/lib/opengauss/data/server.key"
           docker exec opengauss bash -c "sed -i 's/^max_wal_senders\s*=\s*4/max_wal_senders = 80/' /var/lib/opengauss/data/postgresql.conf"
           docker exec opengauss bash -c "sed -i 's/^max_connections\s*=\s*200/max_connections = 500/' /var/lib/opengauss/data/postgresql.conf"
+          docker exec opengauss bash -c "if grep -Eq '^[# ]*ssl\s*=' /var/lib/opengauss/data/postgresql.conf; then sed -i 's/^[# ]*ssl\s*=.*/ssl = on/' /var/lib/opengauss/data/postgresql.conf; else echo 'ssl = on' >> /var/lib/opengauss/data/postgresql.conf; fi"
+          docker exec opengauss bash -c "if grep -Eq '^[# ]*ssl_cert_file\s*=' /var/lib/opengauss/data/postgresql.conf; then sed -i \"s|^[# ]*ssl_cert_file\\s*=.*|ssl_cert_file = 'server.crt'|\" /var/lib/opengauss/data/postgresql.conf; else echo \"ssl_cert_file = 'server.crt'\" >> /var/lib/opengauss/data/postgresql.conf; fi"
+          docker exec opengauss bash -c "if grep -Eq '^[# ]*ssl_key_file\s*=' /var/lib/opengauss/data/postgresql.conf; then sed -i \"s|^[# ]*ssl_key_file\\s*=.*|ssl_key_file = 'server.key'|\" /var/lib/opengauss/data/postgresql.conf; else echo \"ssl_key_file = 'server.key'\" >> /var/lib/opengauss/data/postgresql.conf; fi"
+          docker exec opengauss bash -c "if grep -Eq '^[# ]*ssl_ca_file\s*=' /var/lib/opengauss/data/postgresql.conf; then sed -i \"s|^[# ]*ssl_ca_file\\s*=.*|ssl_ca_file = 'ca.crt'|\" /var/lib/opengauss/data/postgresql.conf; else echo \"ssl_ca_file = 'ca.crt'\" >> /var/lib/opengauss/data/postgresql.conf; fi"
+          docker exec opengauss bash -lc "if ! grep -q 'gaussdb_tests_nossl' /var/lib/opengauss/data/pg_hba.conf; then printf '%s\n%s\n%s\n%s\n' 'hostssl all gaussdb_tests_nossl 0.0.0.0/0 reject' 'hostnossl all gaussdb_tests_nossl 0.0.0.0/0 sha256' 'hostssl all gaussdb_tests_nossl ::/0 reject' 'hostnossl all gaussdb_tests_nossl ::/0 sha256' >/tmp/pg_hba_nossl.conf && cat /tmp/pg_hba_nossl.conf /var/lib/opengauss/data/pg_hba.conf > /tmp/pg_hba.conf && mv /tmp/pg_hba.conf /var/lib/opengauss/data/pg_hba.conf; fi"
           docker exec opengauss bash -c "cat /var/lib/opengauss/data/postgresql.conf"
           docker restart opengauss
           for i in {1..30}; do
@@ -67,15 +84,19 @@ jobs:
             fi
             sleep 1
           done
-
-      - name: Checkout
-        uses: actions/checkout@v4
+          docker exec -i opengauss bash -lc 'export GAUSSHOME=/usr/local/opengauss; export PATH=$GAUSSHOME/bin:$PATH; export LD_LIBRARY_PATH=$GAUSSHOME/lib:$LD_LIBRARY_PATH; cat >/tmp/create_nossl_user.sql; $GAUSSHOME/bin/gsql postgresql://gaussdb:Password%401234@localhost:5432/gaussdb_tests -f /tmp/create_nossl_user.sql' <<'SQL'
+          DROP USER IF EXISTS gaussdb_tests_nossl;
+          CREATE USER gaussdb_tests_nossl PASSWORD 'Password@1234';
+          SQL
+          docker exec -i opengauss bash -lc 'export GAUSSHOME=/usr/local/opengauss; export PATH=$GAUSSHOME/bin:$PATH; export LD_LIBRARY_PATH=$GAUSSHOME/lib:$LD_LIBRARY_PATH; cat >/tmp/verify_nossl_user.sql; $GAUSSHOME/bin/gsql "host=127.0.0.1 port=5432 dbname=gaussdb_tests user=gaussdb_tests_nossl sslmode=disable" -W Password@1234 -f /tmp/verify_nossl_user.sql' <<'SQL'
+          SELECT current_user;
+          SQL
 
       - name: NuGet Cache
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Build.targets') }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Build.props', '**/Directory.Build.targets', 'Directory.Packages.props', 'global.json') }}
           restore-keys: |
             ${{ runner.os }}-nuget
 
@@ -85,6 +106,7 @@ jobs:
           dotnet-version: | 
             8.0.x
             9.0.x
+            10.0.x
 
       - name: DependencyInjection Test
         run: |

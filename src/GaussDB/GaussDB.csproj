@@ -4,7 +4,7 @@
     <Description>GaussDB is the open source .NET data provider for GaussDB/OpenGauss.</Description>
     <PackageTags>$(PackageTags)</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>$(GaussDBSupportedTargetFrameworks)</TargetFrameworks>
     <NoWarn>$(NoWarn);CA2017</NoWarn>
     <NoWarn>$(NoWarn);NPG9001</NoWarn> <!-- Converter-related APIs are experimental -->
     <NoWarn>$(NoWarn);NPG9002</NoWarn> <!-- DatabaseInfo-related APIs are experimental -->
@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../GaussDB.SourceGenerators/GaussDB.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../GaussDB.SourceGenerators/GaussDB.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" GlobalPropertiesToRemove="TargetFramework" />
   </ItemGroup>
 
   <ItemGroup>

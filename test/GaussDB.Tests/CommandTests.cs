@@ -32,6 +32,7 @@ public class CommandTests(MultiplexingMode multiplexingMode) : MultiplexingTestB
     public async Task Multiple_statements(bool[] queries)
     {
         await using var conn = await OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(conn);
         var table = await CreateTempTable(conn, "name TEXT");
         var sb = new StringBuilder();
         foreach (var query in queries)
@@ -41,7 +42,7 @@ public class CommandTests(MultiplexingMode multiplexingMode) : MultiplexingTestB
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
-            if (prepare && !IsMultiplexing)
+            if (prepare && !IsMultiplexing && !isOpenGauss)
                 await cmd.PrepareAsync();
             await using var reader = await cmd.ExecuteReaderAsync();
             var numResultSets = queries.Count(q => q);
@@ -61,13 +62,14 @@ public class CommandTests(MultiplexingMode multiplexingMode) : MultiplexingTestB
             return;
 
         await using var conn = await OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(conn);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT @p1; SELECT @p2";
         var p1 = new GaussDBParameter("p1", GaussDBDbType.Integer);
         var p2 = new GaussDBParameter("p2", GaussDBDbType.Text);
         cmd.Parameters.Add(p1);
         cmd.Parameters.Add(p2);
-        if (prepare == PrepareOrNot.Prepared)
+        if (prepare == PrepareOrNot.Prepared && !isOpenGauss)
             cmd.Prepare();
         p1.Value = 8;
         p2.Value = "foo";
@@ -87,8 +89,9 @@ public class CommandTests(MultiplexingMode multiplexingMode) : MultiplexingTestB
             return;
 
         using var conn = await OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(conn);
         using var cmd = new GaussDBCommand("SELECT 1; SELECT 2", conn);
-        if (prepare == PrepareOrNot.Prepared)
+        if (prepare == PrepareOrNot.Prepared && !isOpenGauss)
             cmd.Prepare();
         using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SingleRow);
         Assert.That(reader.Read(), Is.True);

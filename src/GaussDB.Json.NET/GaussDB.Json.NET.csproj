@@ -3,7 +3,7 @@
     <IsPackable>false</IsPackable>
     <Description>Json.NET plugin for GaussDB, allowing transparent serialization/deserialization of JSON objects directly to and from the database.</Description>
     <PackageTags>$(PackageTags);json;</PackageTags>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>$(GaussDBSupportedTargetFrameworks)</TargetFrameworks>
     <Nullable>enable</Nullable>
     <NoWarn>$(NoWarn);NPG9001</NoWarn> <!-- Converter-related APIs are experimental -->
   </PropertyGroup>
@@ -14,6 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\GaussDB\GaussDB.csproj" />
+    <ProjectReference Include="..\GaussDB\GaussDB.csproj" SkipGetTargetFrameworkProperties="true" />
   </ItemGroup>
 </Project>

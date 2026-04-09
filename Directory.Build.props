@@ -1,5 +1,7 @@
 <Project>
   <PropertyGroup>
+    <GaussDBSupportedTargetFrameworks>net8.0;net9.0;net10.0</GaussDBSupportedTargetFrameworks>
+    <GaussDBNativeAotTargetFrameworks>net8.0;net9.0;net10.0</GaussDBNativeAotTargetFrameworks>
     <VersionPrefix>0.1.1</VersionPrefix>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

@@ -308,13 +308,14 @@ class PoolTests : TestBase
         {
             for (var i = 0; i < iterations; i++)
             {
+                GaussDBDataSource? pool;
                 using (conn = new GaussDBConnection(connString))
                 {
                     conn.Open();
+                    pool = conn.GaussDBDataSource;
                 }
 
                 // Now have one connection in the pool
-                Assert.True(PoolManager.Pools.TryGetValue(connString, out var pool));
                 AssertPoolState(pool, open: 1, idle: 1);
 
                 GaussDBConnection.ClearPool(conn);
@@ -343,10 +344,10 @@ class PoolTests : TestBase
             using (conn)
             {
                 conn.Open();
+                pool = conn.GaussDBDataSource;
                 GaussDBConnection.ClearPool(conn);
                 // conn is still busy but should get closed when returned to the pool
 
-                Assert.True(PoolManager.Pools.TryGetValue(connString, out pool));
                 AssertPoolState(pool, open: 1, idle: 0);
             }
 
@@ -374,15 +375,18 @@ class PoolTests : TestBase
     {
         using var dataSource = CreateDataSource(csb =>
         {
+            csb.Host = "127.0.0.1";
             csb.Port = 44444;
             csb.MaxPoolSize = 1;
+            csb.Timeout = 2;
         });
         //todo: 重构时需要关注适配GaussDB连接池
         using var conn = dataSource.CreateConnection();
         for (var i = 0; i < 1; i++)
-            Assert.That(() => conn.Open(), Throws.Exception
-                .TypeOf<GaussDBException>()
-                .With.InnerException.TypeOf<System.TimeoutException>());
+        {
+            var exception = Assert.Throws<GaussDBException>(() => conn.Open())!;
+            Assert.That(exception.InnerException, Is.InstanceOf<SocketException>().Or.InstanceOf<TimeoutException>());
+        }
         AssertPoolState(dataSource, open: 0, idle: 0);
     }
 

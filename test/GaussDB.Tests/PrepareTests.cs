@@ -286,6 +286,49 @@ public class PrepareTests: TestBase
     public void Legacy_batching()
     {
         using var conn = OpenConnectionAndUnprepare();
+        if (IsOpenGauss(conn))
+        {
+            using (var cmd = new GaussDBCommand("SELECT 1", conn))
+            {
+                cmd.Prepare();
+                Assert.That(cmd.ExecuteScalar(), Is.EqualTo(1));
+            }
+
+            using (var cmd = new GaussDBCommand("SELECT 2", conn))
+            {
+                cmd.Prepare();
+                Assert.That(cmd.ExecuteScalar(), Is.EqualTo(2));
+            }
+
+            AssertNumPreparedStatements(conn, 2);
+
+            using (var batch = new GaussDBBatch(conn) { BatchCommands = { new("SELECT 1"), new("SELECT 2") } })
+            using (var reader = batch.ExecuteReader())
+            {
+                reader.Read();
+                Assert.That(reader.GetInt32(0), Is.EqualTo(1));
+                reader.NextResult();
+                reader.Read();
+                Assert.That(reader.GetInt32(0), Is.EqualTo(2));
+            }
+
+            using (var cmd = new GaussDBCommand("SELECT 1", conn))
+            {
+                cmd.Prepare();
+                Assert.That(cmd.ExecuteScalar(), Is.EqualTo(1));
+            }
+
+            using (var cmd = new GaussDBCommand("SELECT 2", conn))
+            {
+                cmd.Prepare();
+                Assert.That(cmd.ExecuteScalar(), Is.EqualTo(2));
+            }
+
+            AssertNumPreparedStatements(conn, 2);
+            conn.UnprepareAll();
+            return;
+        }
+
         using (var cmd = new GaussDBCommand("SELECT 1; SELECT 2", conn))
         {
             cmd.Prepare();
@@ -322,6 +365,49 @@ public class PrepareTests: TestBase
     public void Batch()
     {
         using var conn = OpenConnectionAndUnprepare();
+        if (IsOpenGauss(conn))
+        {
+            using (var cmd = new GaussDBCommand("SELECT 1", conn))
+            {
+                cmd.Prepare();
+                Assert.That(cmd.ExecuteScalar(), Is.EqualTo(1));
+            }
+
+            using (var cmd = new GaussDBCommand("SELECT 2", conn))
+            {
+                cmd.Prepare();
+                Assert.That(cmd.ExecuteScalar(), Is.EqualTo(2));
+            }
+
+            using (var batch = new GaussDBBatch(conn) { BatchCommands = { new("SELECT 1"), new("SELECT 2") } })
+            using (var reader = batch.ExecuteReader())
+            {
+                reader.Read();
+                Assert.That(reader.GetInt32(0), Is.EqualTo(1));
+                reader.NextResult();
+                reader.Read();
+                Assert.That(reader.GetInt32(0), Is.EqualTo(2));
+            }
+
+            AssertNumPreparedStatements(conn, 2);
+
+            using (var cmd = new GaussDBCommand("SELECT 1", conn))
+            {
+                cmd.Prepare();
+                Assert.That(cmd.ExecuteScalar(), Is.EqualTo(1));
+            }
+
+            using (var cmd = new GaussDBCommand("SELECT 2", conn))
+            {
+                cmd.Prepare();
+                Assert.That(cmd.ExecuteScalar(), Is.EqualTo(2));
+            }
+
+            AssertNumPreparedStatements(conn, 2);
+            conn.UnprepareAll();
+            return;
+        }
+
         using (var batch = new GaussDBBatch(conn) { BatchCommands = { new("SELECT 1"), new("SELECT 2") } })
         {
             batch.Prepare();
@@ -371,10 +457,10 @@ public class PrepareTests: TestBase
     public void One_command_same_sql_twice()
     {
         using var conn = OpenConnectionAndUnprepare();
-        using var cmd = new GaussDBCommand("SELECT 1; SELECT 1", conn);
+        using var cmd = new GaussDBCommand(IsOpenGauss(conn) ? "SELECT 1" : "SELECT 1; SELECT 1", conn);
         cmd.Prepare();
         AssertNumPreparedStatements(conn, 1);
-        cmd.ExecuteNonQuery();
+        Assert.That(cmd.ExecuteScalar(), Is.EqualTo(1));
         cmd.Unprepare();
     }
 
@@ -387,11 +473,20 @@ public class PrepareTests: TestBase
             csb.AutoPrepareMinUsages = 2;
         });
         using var conn = dataSource.OpenConnection();
-        var sql = new StringBuilder();
-        for (var i = 0; i < 2 + 1; i++)
-            sql.Append("SELECT 1;");
-        using (var cmd = new GaussDBCommand(sql.ToString(), conn))
+        if (IsOpenGauss(conn))
+        {
+            using var cmd = new GaussDBCommand("SELECT 1", conn);
+            for (var i = 0; i < 3; i++)
+                cmd.ExecuteNonQuery();
+        }
+        else
+        {
+            var sql = new StringBuilder();
+            for (var i = 0; i < 2 + 1; i++)
+                sql.Append("SELECT 1;");
+            using var cmd = new GaussDBCommand(sql.ToString(), conn);
             cmd.ExecuteNonQuery();
+        }
         AssertNumPreparedStatements(conn, 1);
     }
 
@@ -399,22 +494,28 @@ public class PrepareTests: TestBase
     public void One_command_same_sql_twice_with_params()
     {
         using var conn = OpenConnectionAndUnprepare();
-        using var cmd = new GaussDBCommand("SELECT @p1; SELECT @p2", conn);
+        var isOpenGauss = IsOpenGauss(conn);
+        using var cmd = new GaussDBCommand(isOpenGauss ? "SELECT @p1" : "SELECT @p1; SELECT @p2", conn);
         cmd.Parameters.Add("p1", GaussDBDbType.Integer);
-        cmd.Parameters.Add("p2", GaussDBDbType.Integer);
+        if (!isOpenGauss)
+            cmd.Parameters.Add("p2", GaussDBDbType.Integer);
         cmd.Prepare();
         AssertNumPreparedStatements(conn, 1);
 
         cmd.Parameters[0].Value = 8;
-        cmd.Parameters[1].Value = 9;
+        if (!isOpenGauss)
+            cmd.Parameters[1].Value = 9;
         using (var reader = cmd.ExecuteReader())
         {
             Assert.That(reader.Read(), Is.True);
             Assert.That(reader.GetInt32(0), Is.EqualTo(8));
-            Assert.That(reader.NextResult(), Is.True);
-            Assert.That(reader.Read(), Is.True);
-            Assert.That(reader.GetInt32(0), Is.EqualTo(9));
-            Assert.That(reader.NextResult(), Is.False);
+            if (!isOpenGauss)
+            {
+                Assert.That(reader.NextResult(), Is.True);
+                Assert.That(reader.Read(), Is.True);
+                Assert.That(reader.GetInt32(0), Is.EqualTo(9));
+                Assert.That(reader.NextResult(), Is.False);
+            }
         }
 
         cmd.Unprepare();
@@ -424,6 +525,25 @@ public class PrepareTests: TestBase
     public void Unprepare_via_different_command()
     {
         using var conn = OpenConnectionAndUnprepare();
+        if (IsOpenGauss(conn))
+        {
+            using var safeCmd1 = new GaussDBCommand("SELECT 1", conn);
+            using var safeCmd2 = new GaussDBCommand("SELECT 2", conn);
+            safeCmd1.Prepare();
+            safeCmd2.Prepare();
+            AssertNumPreparedStatements(conn, 2);
+            safeCmd2.Unprepare();
+            AssertNumPreparedStatements(conn, 1);
+            Assert.That(safeCmd1.IsPrepared, Is.True);
+            Assert.That(safeCmd1.ExecuteScalar(), Is.EqualTo(1));
+            safeCmd1.Unprepare();
+            AssertNumPreparedStatements(conn, 0);
+            Assert.That(safeCmd1.IsPrepared, Is.False);
+            Assert.That(safeCmd1.ExecuteScalar(), Is.EqualTo(1));
+            conn.UnprepareAll();
+            return;
+        }
+
         using var cmd1 = new GaussDBCommand("SELECT 1; SELECT 2", conn);
         using var cmd2 = new GaussDBCommand("SELECT 2; SELECT 3", conn);
         cmd1.Prepare();
@@ -473,10 +593,15 @@ public class PrepareTests: TestBase
         using var conn = OpenConnectionAndUnprepare();
         using var cmd = new GaussDBCommand();
         cmd.Connection = conn;
-        var sb = new StringBuilder();
-        for (var i = 0; i < conn.Settings.WriteBufferSize; i++)
-            sb.Append("SELECT 1;");
-        cmd.CommandText = sb.ToString();
+        if (IsOpenGauss(conn))
+            cmd.CommandText = $"SELECT repeat('x', {conn.Settings.WriteBufferSize})";
+        else
+        {
+            var sb = new StringBuilder();
+            for (var i = 0; i < conn.Settings.WriteBufferSize; i++)
+                sb.Append("SELECT 1;");
+            cmd.CommandText = sb.ToString();
+        }
         cmd.Prepare();
         cmd.Unprepare();
     }
@@ -697,6 +822,29 @@ public class PrepareTests: TestBase
     public void Prepare_multiple_commands_with_parameters()
     {
         using var conn = OpenConnection();
+        if (IsOpenGauss(conn))
+        {
+            using var safeCmd1 = new GaussDBCommand("SELECT @p1", conn);
+            using var safeCmd2 = new GaussDBCommand("SELECT @p1", conn);
+            using var safeCmd3 = new GaussDBCommand("SELECT @p2", conn);
+            var safeP1 = new GaussDBParameter("p1", GaussDBDbType.Integer);
+            var safeP21 = new GaussDBParameter("p1", GaussDBDbType.Text);
+            var safeP22 = new GaussDBParameter("p2", GaussDBDbType.Text);
+            safeCmd1.Parameters.Add(safeP1);
+            safeCmd2.Parameters.Add(safeP21);
+            safeCmd3.Parameters.Add(safeP22);
+            safeCmd1.Prepare();
+            safeCmd2.Prepare();
+            safeCmd3.Prepare();
+            safeP1.Value = 8;
+            safeP21.Value = "foo";
+            safeP22.Value = "bar";
+            Assert.That(safeCmd1.ExecuteScalar(), Is.EqualTo(8));
+            Assert.That(safeCmd2.ExecuteScalar(), Is.EqualTo("foo"));
+            Assert.That(safeCmd3.ExecuteScalar(), Is.EqualTo("bar"));
+            return;
+        }
+
         using var cmd1 = new GaussDBCommand("SELECT @p1;", conn);
         using var cmd2 = new GaussDBCommand("SELECT @p1; SELECT @p2;", conn);
         var p1 = new GaussDBParameter("p1", GaussDBDbType.Integer);

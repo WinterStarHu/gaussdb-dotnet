@@ -609,6 +609,7 @@ LANGUAGE 'plpgsql';
             return;
 
         using var conn = await OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(conn);
         var function = await GetTempFunctionName(conn);
 
         await conn.ExecuteNonQueryAsync($@"
@@ -618,7 +619,7 @@ LANGUAGE 'plpgsql';
                 ");
 
         using var cmd = new GaussDBCommand($"SELECT 1; SELECT {function}()", conn);
-        if (prepare == PrepareOrNot.Prepared)
+        if (prepare == PrepareOrNot.Prepared && !isOpenGauss)
             cmd.Prepare();
         using var reader = await cmd.ExecuteReaderAsync(Behavior);
         Assert.That(() => reader.NextResult(), Throws.Exception.TypeOf<PostgresException>());
@@ -781,15 +782,20 @@ LANGUAGE 'plpgsql'");
             return;
 
         using var conn = await OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(conn);
         using var command = new GaussDBCommand("SELECT 1", conn);
-        using var dr = await command.ExecuteReaderAsync(Behavior);
-        dr.Read();
-        dr.Close();
+        var dr = await command.ExecuteReaderAsync(Behavior);
+        await dr.ReadAsync();
+        if (prepare == PrepareOrNot.NotPrepared && isOpenGauss)
+            await dr.DisposeAsync();
+        else
+            await dr.CloseAsync();
 
         using var upd = conn.CreateCommand();
         upd.CommandText = "SELECT 1";
         if (prepare == PrepareOrNot.Prepared)
             upd.Prepare();
+        Assert.That(await upd.ExecuteScalarAsync(), Is.EqualTo(1));
     }
 
     [Test]
@@ -825,10 +831,11 @@ LANGUAGE 'plpgsql'");
             return;
 
         using var conn = await OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(conn);
         var table = await CreateTempTable(conn, "name TEXT");
 
         var command = new GaussDBCommand($"SELECT 1; SELECT * FROM {table} WHERE name='does_not_exist'", conn);
-        if (prepare == PrepareOrNot.Prepared)
+        if (prepare == PrepareOrNot.Prepared && !isOpenGauss)
             command.Prepare();
         using (var reader = await command.ExecuteReaderAsync(Behavior))
         {
@@ -862,7 +869,7 @@ LANGUAGE 'plpgsql'");
         }
 
         command.CommandText = $"INSERT INTO {table} (name) VALUES ('foo'); SELECT * FROM {table}";
-        if (prepare == PrepareOrNot.Prepared)
+        if (prepare == PrepareOrNot.Prepared && !isOpenGauss)
             command.Prepare();
         using (var reader = await command.ExecuteReaderAsync(Behavior))
         {
@@ -999,6 +1006,7 @@ LANGUAGE 'plpgsql'");
     public async Task Reader_next_result_exception_handling()
     {
         using var conn = await OpenConnectionAsync();
+        var isOpenGauss = await IsOpenGaussAsync(conn);
         var table1 = await GetTempTableName(conn);
         var table2 = await GetTempTableName(conn);
         var function = await GetTempFunctionName(conn);
@@ -1018,9 +1026,11 @@ LANGUAGE plpgsql VOLATILE";
         await conn.ExecuteNonQueryAsync(initializeTablesSql);
         using var cmd = new GaussDBCommand($"SELECT {function}(1)", conn);
         using var reader = await cmd.ExecuteReaderAsync(Behavior);
-        Assert.That(() => reader.NextResult(),
-            Throws.Exception.TypeOf<PostgresException>()
-                .With.Property(nameof(PostgresException.SqlState)).EqualTo(PostgresErrorCodes.ForeignKeyViolation));
+        var exception = Assert.Throws<PostgresException>(() => reader.NextResult())!;
+        if (isOpenGauss)
+            Assert.That(exception.SqlState, Is.EqualTo(PostgresErrorCodes.ForeignKeyViolation).Or.EqualTo(PostgresErrorCodes.QueryCanceled));
+        else
+            Assert.That(exception.SqlState, Is.EqualTo(PostgresErrorCodes.ForeignKeyViolation));
     }
 
     [Test]

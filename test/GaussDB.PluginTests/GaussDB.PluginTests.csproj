@@ -11,11 +11,11 @@
   </ItemGroup>
   
   <ItemGroup>
-    <ProjectReference Include="../../src/GaussDB/GaussDB.csproj" />
-    <ProjectReference Include="../../src/GaussDB.NodaTime/GaussDB.NodaTime.csproj" />
-    <ProjectReference Include="../../src/GaussDB.Json.NET/GaussDB.Json.NET.csproj" />
-    <ProjectReference Include="../GaussDB.Tests/GaussDB.Tests.csproj" />
-    <ProjectReference Include="../../src/GaussDB.NetTopologySuite/GaussDB.NetTopologySuite.csproj" />
-    <ProjectReference Include="../../src/GaussDB.GeoJSON/GaussDB.GeoJSON.csproj" />
+    <ProjectReference Include="../../src/GaussDB/GaussDB.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../../src/GaussDB.NodaTime/GaussDB.NodaTime.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../../src/GaussDB.Json.NET/GaussDB.Json.NET.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../GaussDB.Tests/GaussDB.Tests.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../../src/GaussDB.NetTopologySuite/GaussDB.NetTopologySuite.csproj" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../../src/GaussDB.GeoJSON/GaussDB.GeoJSON.csproj" SkipGetTargetFrameworkProperties="true" />
   </ItemGroup>
 </Project>
