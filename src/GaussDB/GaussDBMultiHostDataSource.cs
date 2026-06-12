@@ -1,6 +1,7 @@
 using HuaweiCloud.GaussDB.Internal;
 using HuaweiCloud.GaussDB.Util;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -23,6 +24,9 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
     internal override bool OwnsConnectors => false;
 
     readonly GaussDBDataSource[] _pools;
+    readonly ConcurrentDictionary<string, GaussDBDataSource> _endpointPools = new(StringComparer.Ordinal);
+    readonly SeedCluster[] _seedClusters;
+    readonly string _urlKey;
 
     internal GaussDBDataSource[] Pools => _pools;
 
@@ -33,8 +37,9 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
     internal GaussDBMultiHostDataSource(GaussDBConnectionStringBuilder settings, GaussDBDataSourceConfiguration dataSourceConfig)
         : base(settings, dataSourceConfig)
     {
-        var hosts = settings.Host!.Split(',');
+        var hosts = settings.Host!.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         _pools = new GaussDBDataSource[hosts.Length];
+        var seedEndpoints = new HaEndpoint[hosts.Length];
         for (var i = 0; i < hosts.Length; i++)
         {
             var poolSettings = settings.Clone();
@@ -44,14 +49,22 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
             {
                 poolSettings.Host = newHost;
                 poolSettings.Port = newPort;
+                seedEndpoints[i] = new(newHost, newPort);
             }
             else
+            {
                 poolSettings.Host = host.ToString();
+                seedEndpoints[i] = new(host.ToString(), settings.Port);
+            }
 
             _pools[i] = settings.Pooling
                 ? new PoolingDataSource(poolSettings, dataSourceConfig)
                 : new UnpooledDataSource(poolSettings, dataSourceConfig);
+            _endpointPools.TryAdd(seedEndpoints[i].Key, _pools[i]);
         }
+
+        _seedClusters = BuildSeedClusters(settings, seedEndpoints);
+        _urlKey = CreateKey(seedEndpoints);
 
         var targetSessionAttributeValues = Enum.GetValues<TargetSessionAttributes>().ToArray();
         var highestValue = 0;
@@ -157,22 +170,17 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
     }
 
     async ValueTask<GaussDBConnector?> TryGetIdleOrNew(
+        IReadOnlyList<GaussDBDataSource> pools,
         GaussDBConnection conn,
         TimeSpan timeoutPerHost,
         bool async,
         TargetSessionAttributes preferredType, Func<DatabaseState, TargetSessionAttributes, bool> stateValidator,
-        int poolIndex,
         IList<Exception> exceptions,
         CancellationToken cancellationToken)
     {
-        var pools = _pools;
-        for (var i = 0; i < pools.Length; i++)
+        for (var i = 0; i < pools.Count; i++)
         {
-            var pool = pools[poolIndex];
-            poolIndex++;
-            if (poolIndex == pools.Length)
-                poolIndex = 0;
-
+            var pool = pools[i];
             var databaseState = pool.GetDatabaseState();
             if (!stateValidator(databaseState, preferredType))
                 continue;
@@ -231,23 +239,18 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
     }
 
     async ValueTask<GaussDBConnector?> TryGet(
+        IReadOnlyList<GaussDBDataSource> pools,
         GaussDBConnection conn,
         TimeSpan timeoutPerHost,
         bool async,
         TargetSessionAttributes preferredType,
         Func<DatabaseState, TargetSessionAttributes, bool> stateValidator,
-        int poolIndex,
         IList<Exception> exceptions,
         CancellationToken cancellationToken)
     {
-        var pools = _pools;
-        for (var i = 0; i < pools.Length; i++)
+        for (var i = 0; i < pools.Count; i++)
         {
-            var pool = pools[poolIndex];
-            poolIndex++;
-            if (poolIndex == pools.Length)
-                poolIndex = 0;
-
+            var pool = pools[i];
             var databaseState = pool.GetDatabaseState();
             if (!stateValidator(databaseState, preferredType))
                 continue;
@@ -294,23 +297,240 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
         CheckDisposed();
 
         var exceptions = new List<Exception>();
-
-        var poolIndex = conn.Settings.LoadBalanceHosts ? GetRoundRobinIndex() : 0;
-
         var timeoutPerHost = timeout.IsSet ? timeout.CheckAndGetTimeLeft() : TimeSpan.Zero;
         var preferredType = GetTargetSessionAttributes(conn);
         var checkUnpreferred = preferredType is TargetSessionAttributes.PreferPrimary or TargetSessionAttributes.PreferStandby;
 
-        var connector = await TryGetIdleOrNew(conn, timeoutPerHost, async, preferredType, IsPreferred, poolIndex, exceptions, cancellationToken).ConfigureAwait(false) ??
-                        (checkUnpreferred ?
-                            await TryGetIdleOrNew(conn, timeoutPerHost, async, preferredType, IsOnline, poolIndex, exceptions, cancellationToken).ConfigureAwait(false)
-                            : null) ??
-                        await TryGet(conn, timeoutPerHost, async, preferredType, IsPreferred, poolIndex, exceptions, cancellationToken).ConfigureAwait(false) ??
-                        (checkUnpreferred ?
-                            await TryGet(conn, timeoutPerHost, async, preferredType, IsOnline, poolIndex, exceptions, cancellationToken).ConfigureAwait(false)
-                            : null);
+        if (!Settings.UsesHaRouting)
+        {
+            var candidatePools = GetLegacyPools(conn.Settings.LoadBalanceHosts);
+            var legacyConnector = await TryGetIdleOrNew(candidatePools, conn, timeoutPerHost, async, preferredType, IsPreferred, exceptions, cancellationToken).ConfigureAwait(false) ??
+                                  (checkUnpreferred
+                                      ? await TryGetIdleOrNew(candidatePools, conn, timeoutPerHost, async, preferredType, IsOnline, exceptions, cancellationToken).ConfigureAwait(false)
+                                      : null) ??
+                                  await TryGet(candidatePools, conn, timeoutPerHost, async, preferredType, IsPreferred, exceptions, cancellationToken).ConfigureAwait(false) ??
+                                  (checkUnpreferred
+                                      ? await TryGet(candidatePools, conn, timeoutPerHost, async, preferredType, IsOnline, exceptions, cancellationToken).ConfigureAwait(false)
+                                      : null);
 
-        return connector ?? throw NoSuitableHostsException(exceptions);
+            return legacyConnector ?? throw NoSuitableHostsException(exceptions);
+        }
+
+        var clusterPlans = await BuildClusterRoutingPlans(conn, async, cancellationToken).ConfigureAwait(false);
+        foreach (var clusterPlan in clusterPlans)
+        {
+            if (clusterPlan.Pools.Length == 0)
+                continue;
+
+            var connector = await TryGetIdleOrNew(clusterPlan.Pools, conn, timeoutPerHost, async, preferredType, IsPreferred, exceptions, cancellationToken).ConfigureAwait(false) ??
+                            (checkUnpreferred
+                                ? await TryGetIdleOrNew(clusterPlan.Pools, conn, timeoutPerHost, async, preferredType, IsOnline, exceptions, cancellationToken).ConfigureAwait(false)
+                                : null) ??
+                            await TryGet(clusterPlan.Pools, conn, timeoutPerHost, async, preferredType, IsPreferred, exceptions, cancellationToken).ConfigureAwait(false) ??
+                            (checkUnpreferred
+                                ? await TryGet(clusterPlan.Pools, conn, timeoutPerHost, async, preferredType, IsOnline, exceptions, cancellationToken).ConfigureAwait(false)
+                                : null);
+
+            if (connector is not null)
+            {
+                if (Settings.PriorityServers > 0)
+                    GaussDBGlobalClusterStatusTracker.ReportPrimary(_urlKey, clusterPlan.ClusterKey);
+
+                return connector;
+            }
+        }
+
+        throw NoSuitableHostsException(exceptions);
+    }
+
+    GaussDBDataSource[] GetLegacyPools(bool loadBalanceHosts)
+    {
+        if (!loadBalanceHosts || _pools.Length <= 1)
+            return _pools;
+
+        var startIndex = GetRoundRobinIndex() % _pools.Length;
+        var candidatePools = new GaussDBDataSource[_pools.Length];
+        for (var i = 0; i < _pools.Length; i++)
+            candidatePools[i] = _pools[(startIndex + i) % _pools.Length];
+
+        return candidatePools;
+    }
+
+    ValueTask<ClusterRoutingPlan[]> BuildClusterRoutingPlans(GaussDBConnection conn, bool async, CancellationToken cancellationToken)
+        => async
+            ? BuildClusterRoutingPlansAsync(conn, cancellationToken)
+            : new(BuildClusterRoutingPlansAsync(conn, cancellationToken).GetAwaiter().GetResult());
+
+    async ValueTask<ClusterRoutingPlan[]> BuildClusterRoutingPlansAsync(GaussDBConnection conn, CancellationToken cancellationToken)
+    {
+        var orderedClusters = OrderClusters();
+        var plans = new ClusterRoutingPlan[orderedClusters.Length];
+        for (var i = 0; i < orderedClusters.Length; i++)
+        {
+            var cluster = orderedClusters[i];
+            var endpoints = await ResolveClusterEndpoints(cluster, cancellationToken).ConfigureAwait(false);
+            var orderedEndpoints = OrderClusterEndpoints(conn.Settings, cluster, endpoints);
+            plans[i] = new(cluster.Key, orderedEndpoints.Select(GetOrAddEndpointPool)
+                .Where(static pool => pool.GetDatabaseState() != DatabaseState.Offline)
+                .ToArray());
+        }
+
+        return plans;
+    }
+
+    SeedCluster[] OrderClusters()
+    {
+        if (_seedClusters.Length <= 1)
+            return _seedClusters;
+
+        var preferredClusterKey = GaussDBGlobalClusterStatusTracker.GetPreferredClusterKey(_urlKey);
+        if (preferredClusterKey is null)
+            return _seedClusters;
+
+        return _seedClusters
+            .OrderByDescending(cluster => cluster.Key == preferredClusterKey)
+            .ToArray();
+    }
+
+    async ValueTask<HaEndpoint[]> ResolveClusterEndpoints(SeedCluster cluster, CancellationToken cancellationToken)
+    {
+        var snapshot = await GaussDBCoordinatorListTracker.GetSnapshotAsync(
+                cluster.Key,
+                TimeSpan.FromSeconds(Settings.RefreshCNIpListTime),
+                ct => RefreshCoordinatorEndpoints(cluster, ct),
+                async: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return snapshot is { Length: > 0 }
+            ? snapshot
+            : cluster.SeedEndpoints;
+    }
+
+    async ValueTask<HaEndpoint[]?> RefreshCoordinatorEndpoints(SeedCluster cluster, CancellationToken cancellationToken)
+    {
+        foreach (var endpoint in cluster.SeedEndpoints)
+        {
+            var pool = GetOrAddEndpointPool(endpoint);
+            try
+            {
+                var connection = await pool.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+                await using (connection.ConfigureAwait(false))
+                {
+                    using var command = connection.CreateCommand();
+                    command.CommandText = Settings.UsingEip
+                        ? "select node_host1,node_port1 from pgxc_node where node_type='C' and nodeis_active = true order by node_host1;"
+                        : "select node_host,node_port from pgxc_node where node_type='C' and nodeis_active = true order by node_host;";
+
+                    var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                    await using (reader.ConfigureAwait(false))
+                    {
+                        var refreshedEndpoints = new List<HaEndpoint>();
+                        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                            refreshedEndpoints.Add(new(reader.GetString(0), reader.GetInt32(1)));
+
+                        return refreshedEndpoints.Count == 0 ? null : refreshedEndpoints.ToArray();
+                    }
+                }
+            }
+            catch
+            {
+                // Fall back to static seed routing if discovery is unavailable from this endpoint.
+            }
+        }
+
+        return null;
+    }
+
+    HaEndpoint[] OrderClusterEndpoints(
+        GaussDBConnectionStringBuilder settings,
+        SeedCluster cluster,
+        IReadOnlyList<HaEndpoint> resolvedEndpoints)
+    {
+        if (resolvedEndpoints.Count <= 1)
+            return resolvedEndpoints.ToArray();
+
+        var allEndpoints = resolvedEndpoints.ToList();
+        var priorityCount = settings.GetEffectivePriorityHostCount(cluster.SeedEndpoints.Length);
+
+        List<HaEndpoint> priorityEndpoints;
+        List<HaEndpoint> nonPriorityEndpoints;
+        if (priorityCount > 0)
+        {
+            var priorityKeys = new HashSet<string>(cluster.SeedEndpoints.Take(priorityCount).Select(static endpoint => endpoint.Key), StringComparer.Ordinal);
+            priorityEndpoints = allEndpoints.Where(endpoint => priorityKeys.Contains(endpoint.Key)).ToList();
+            nonPriorityEndpoints = allEndpoints.Where(endpoint => !priorityKeys.Contains(endpoint.Key)).ToList();
+        }
+        else
+        {
+            priorityEndpoints = [];
+            nonPriorityEndpoints = allEndpoints;
+        }
+
+        switch (settings.AutoBalanceModeParsed)
+        {
+        case HaAutoBalanceMode.Shuffle:
+            Shuffle(nonPriorityEndpoints);
+            return nonPriorityEndpoints.ToArray();
+        case HaAutoBalanceMode.RoundRobin:
+            return Rotate(nonPriorityEndpoints).ToArray();
+        case HaAutoBalanceMode.Priority:
+            if (priorityEndpoints.Count > 0)
+            {
+                var orderedPriorityEndpoints = Rotate(priorityEndpoints);
+                Shuffle(nonPriorityEndpoints);
+                orderedPriorityEndpoints.AddRange(nonPriorityEndpoints);
+                return orderedPriorityEndpoints.ToArray();
+            }
+
+            return Rotate(allEndpoints).ToArray();
+        case HaAutoBalanceMode.ShufflePriority:
+            if (priorityEndpoints.Count > 0)
+            {
+                Shuffle(priorityEndpoints);
+                Shuffle(nonPriorityEndpoints);
+                priorityEndpoints.AddRange(nonPriorityEndpoints);
+                return priorityEndpoints.ToArray();
+            }
+
+            return Rotate(allEndpoints).ToArray();
+        default:
+            return settings.LoadBalanceHosts
+                ? Rotate(allEndpoints).ToArray()
+                : allEndpoints.ToArray();
+        }
+    }
+
+    GaussDBDataSource GetOrAddEndpointPool(HaEndpoint endpoint)
+        => _endpointPools.GetOrAdd(endpoint.Key, _ =>
+        {
+            var poolSettings = Settings.Clone();
+            poolSettings.Host = endpoint.Host;
+            poolSettings.Port = endpoint.Port;
+            return Settings.Pooling
+                ? new PoolingDataSource(poolSettings, Configuration)
+                : new UnpooledDataSource(poolSettings, Configuration);
+        });
+
+    List<T> Rotate<T>(IReadOnlyList<T> source)
+    {
+        if (source.Count <= 1)
+            return source.ToList();
+
+        var startIndex = GetRoundRobinIndex() % source.Count;
+        var rotated = new List<T>(source.Count);
+        for (var i = 0; i < source.Count; i++)
+            rotated.Add(source[(startIndex + i) % source.Count]);
+        return rotated;
+    }
+
+    static void Shuffle<T>(IList<T> values)
+    {
+        for (var i = values.Count - 1; i > 0; i--)
+        {
+            var swapIndex = Random.Shared.Next(i + 1);
+            (values[i], values[swapIndex]) = (values[swapIndex], values[i]);
+        }
     }
 
     static GaussDBException NoSuitableHostsException(IList<Exception> exceptions)
@@ -366,7 +586,7 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
     /// <inheritdoc />
     public override void Clear()
     {
-        foreach (var pool in _pools)
+        foreach (var pool in _endpointPools.Values)
             pool.Clear();
     }
 
@@ -376,7 +596,7 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
     /// </summary>
     public void ClearDatabaseStates()
     {
-        foreach (var pool in _pools)
+        foreach (var pool in _endpointPools.Values)
         {
             pool.UpdateDatabaseState(default, default, default, ignoreTimeStamp: true);
         }
@@ -389,7 +609,7 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
             var numConnectors = 0;
             var idleCount = 0;
 
-            foreach (var pool in _pools)
+            foreach (var pool in _endpointPools.Values)
             {
                 var stat = pool.Statistics;
                 numConnectors += stat.Total;
@@ -458,4 +678,24 @@ public sealed class GaussDBMultiHostDataSource : GaussDBDataSource
            (PostgresEnvironment.TargetSessionAttributes is { } s
                ? GaussDBConnectionStringBuilder.ParseTargetSessionAttributes(s)
                : TargetSessionAttributes.Any);
+
+    static SeedCluster[] BuildSeedClusters(GaussDBConnectionStringBuilder settings, HaEndpoint[] seedEndpoints)
+    {
+        if (settings.PriorityServers > 0 && settings.PriorityServers < seedEndpoints.Length)
+        {
+            return
+            [
+                new(CreateKey(seedEndpoints[..settings.PriorityServers]), seedEndpoints[..settings.PriorityServers]),
+                new(CreateKey(seedEndpoints[settings.PriorityServers..]), seedEndpoints[settings.PriorityServers..])
+            ];
+        }
+
+        return [new(CreateKey(seedEndpoints), seedEndpoints)];
+    }
+
+    static string CreateKey(IReadOnlyCollection<HaEndpoint> endpoints)
+        => string.Join(",", endpoints.Select(static endpoint => endpoint.Key).OrderBy(static endpoint => endpoint, StringComparer.Ordinal));
+
+    readonly record struct SeedCluster(string Key, HaEndpoint[] SeedEndpoints);
+    readonly record struct ClusterRoutingPlan(string ClusterKey, GaussDBDataSource[] Pools);
 }

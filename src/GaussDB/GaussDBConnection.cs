@@ -285,7 +285,25 @@ public sealed class GaussDBConnection : DbConnection, ICloneable, IComponent
             return Task.CompletedTask;
         }
 
-        return OpenAsync(async, cancellationToken);
+        return OpenWithRetry(async, cancellationToken);
+
+        async Task OpenWithRetry(bool async, CancellationToken cancellationToken)
+        {
+            var remainingReconnects = GetMaxAutoReconnectAttempts();
+
+            while (true)
+            {
+                try
+                {
+                    await OpenAsync(async, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                catch (Exception e) when (remainingReconnects > 0 && CanAutoReconnectOnOpen(e))
+                {
+                    remainingReconnects--;
+                }
+            }
+        }
 
         async Task OpenAsync(bool async, CancellationToken cancellationToken)
         {
@@ -1553,6 +1571,90 @@ public sealed class GaussDBConnection : DbConnection, ICloneable, IComponent
             return;
         }
     }
+
+    internal bool SupportsAutoReconnect
+        => !Settings.Multiplexing && Settings.AutoReconnect && _dataSource is not null;
+
+    internal int GetMaxAutoReconnectAttempts()
+        => SupportsAutoReconnect ? Settings.MaxReconnects : 0;
+
+    internal bool CanStartAutoReconnectCommandScope()
+    {
+        if (!SupportsAutoReconnect)
+            return false;
+
+        if (EnlistedTransaction != null || ConnectorBindingScope is ConnectorBindingScope.Transaction or ConnectorBindingScope.Copy)
+            return false;
+
+        var connector = Connector;
+        if (connector is null)
+            return true;
+
+        if (connector.InTransaction || connector.CurrentCopyOperation != null)
+            return false;
+
+        return connector.CurrentReader is null;
+    }
+
+    internal bool CanAutoReconnectOnOpen(Exception exception)
+        => SupportsAutoReconnect && IsAutoReconnectCandidate(exception);
+
+    internal bool CanAutoReconnectCommand(Exception exception, bool allowAutoReconnect)
+        => allowAutoReconnect && IsAutoReconnectCandidate(exception);
+
+    internal async Task PerformAutoReconnect(bool async, CancellationToken cancellationToken)
+    {
+        if (FullState is not ConnectionState.Closed)
+            await Close(async).ConfigureAwait(false);
+
+        await Open(async, cancellationToken).ConfigureAwait(false);
+    }
+
+    static bool IsAutoReconnectCandidate(Exception exception)
+    {
+        if (exception is OperationCanceledException)
+            return false;
+
+        return exception switch
+        {
+            IOException => true,
+            SocketException => true,
+            TimeoutException => true,
+            PostgresException postgresException => IsAutoReconnectSqlState(postgresException.SqlState),
+            GaussDBException gaussDBException => gaussDBException.InnerException is not null && IsAutoReconnectCandidate(gaussDBException.InnerException),
+            AggregateException aggregateException => AreAllAutoReconnectCandidates(aggregateException),
+            _ => false
+        };
+    }
+
+    static bool AreAllAutoReconnectCandidates(AggregateException aggregateException)
+    {
+        if (aggregateException.InnerExceptions.Count == 0)
+            return false;
+
+        foreach (var innerException in aggregateException.InnerExceptions)
+        {
+            if (!IsAutoReconnectCandidate(innerException))
+                return false;
+        }
+
+        return true;
+    }
+
+    static bool IsAutoReconnectSqlState(string sqlState)
+        => sqlState switch
+        {
+            PostgresErrorCodes.ConnectionException => true,
+            PostgresErrorCodes.ConnectionDoesNotExist => true,
+            PostgresErrorCodes.ConnectionFailure => true,
+            PostgresErrorCodes.SqlClientUnableToEstablishSqlConnection => true,
+            PostgresErrorCodes.SqlServerRejectedEstablishmentOfSqlConnection => true,
+            PostgresErrorCodes.AdminShutdown => true,
+            PostgresErrorCodes.CrashShutdown => true,
+            PostgresErrorCodes.CannotConnectNow => true,
+            PostgresErrorCodes.IdleSessionTimeout => true,
+            _ => false
+        };
 
     #endregion State checks
 
